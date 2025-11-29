@@ -5,11 +5,18 @@ import os
 import threading
 import time
 import time
+# Try qBittorrent first, then fall back to mock
+USE_QBITTORRENT = False
 try:
-    import libtorrent as lt
-except ImportError:
+    import qbittorrent_client
+    if qbittorrent_client.QBITTORRENT_AVAILABLE:
+        USE_QBITTORRENT = True
+        print("✅ Using qBittorrent for REAL torrenting")
+    else:
+        raise ImportError("qBittorrent not available")
+except Exception as e:
     import mock_libtorrent as lt
-    print("⚠️ Libtorrent not found. Using MOCK implementation.")
+    print(f"⚠️ qBittorrent not available ({e}). Using MOCK implementation.")
 
 from datetime import datetime
 import hashlib
@@ -443,7 +450,9 @@ def upload_torrent():
     
     # Parse torrent info
     try:
-        info = lt.torrent_info(filepath)
+        # Use mock_libtorrent for parsing (works for both modes)
+        import mock_libtorrent as lt_parser
+        info = lt_parser.torrent_info(filepath)
         torrent_data = {
             'torrent_id': filename.replace('.torrent', ''),
             'name': info.name(),
