@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TorrentGuard | Malware Scanner</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ TorrentGuard</h1>
+            <p>Real-time Malware Detection Engine</p>
+        </div>
+        
+        <div class="content">
+            <!-- Step 1: Upload Torrent -->
+            <div class="section">
+                <h2>01 // UPLOAD TARGET</h2>
+                <div class="upload-area" onclick="document.getElementById('torrentFile').click()">
+                    <p>CLICK TO SELECT .TORRENT FILE</p>
+                    <input type="file" id="torrentFile" accept=".torrent" onchange="uploadTorrent()">
+                </div>
+                <div id="uploadResult" class="hidden"></div>
+            </div>
+            
+            <!-- Step 2: Start Download -->
+            <div class="section">
+                <h2>02 // INITIATE SCAN</h2>
+                <button id="startBtn" onclick="startDownload()" disabled>START SECURE DOWNLOAD</button>
+            </div>
+            
+            <!-- Progress Section -->
+            <div id="progressSection" class="section hidden">
+                <h2>03 // LIVE ANALYSIS</h2>
+                
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0%</div>
+                </div>
+                
+                <div class="risk-meter">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                        <h3>THREAT LEVEL</h3>
+                        <span id="riskText" style="font-weight: bold;">0.0%</span>
+                    </div>
+                    <div class="risk-bar">
+                        <div class="risk-fill risk-low" id="riskBar" style="width: 0%"></div>
+                    </div>
+                </div>
+                
+                <div class="piece-list" id="pieceList">
+                    <!-- Pieces will appear here -->
+                </div>
+            </div>
+            
+            <!-- Final Result -->
+            <div id="resultSection" class="hidden"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
