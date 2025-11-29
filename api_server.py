@@ -546,7 +546,80 @@ class TorrentDownloader:
             
         
             # Run detection (rest stays the same)
-            result = detector.predict(piece_data, file_path=None)
+            # Run detection (rest stays the same)
+            # 🔬 REAL FEATURE EXTRACTION
+            piece_entropy = 0.0
+            has_mz_header = False
+            
+            try:
+                if self.use_qbittorrent:
+                    save_path = self.qb_client.get_download_path(self.torrent_hash)
+                    
+                    # Determine if we need to handle multi-file or single-file
+                    data = b''
+                    piece_offset = piece_index * self.torrent_info.piece_length()
+                    piece_len = self.torrent_info.piece_length()
+                    
+                    if save_path and os.path.exists(save_path):
+                        if os.path.isfile(save_path):
+                            # Single file mode
+                            with open(save_path, 'rb') as f:
+                                f.seek(piece_offset)
+                                data = f.read(piece_len)
+                        elif os.path.isdir(save_path):
+                            # Multi-file mode: Need to find which file(s) contain this piece
+                            files = self.qb_client.get_torrent_files(self.torrent_hash)
+                            current_offset = 0
+                            
+                            for file_info in files:
+                                # Handle both object and dict access for file_info
+                                f_size = file_info.size if hasattr(file_info, 'size') else file_info.get('size', 0)
+                                f_name = file_info.name if hasattr(file_info, 'name') else file_info.get('name', '')
+                                
+                                file_start = current_offset
+                                file_end = current_offset + f_size
+                                
+                                # Check if piece overlaps with this file
+                                if piece_offset < file_end and (piece_offset + piece_len) > file_start:
+                                    # Calculate overlap
+                                    read_start = max(0, piece_offset - file_start)
+                                    read_len = min(piece_len - len(data), f_size - read_start)
+                                    
+                                    full_path = os.path.join(save_path, f_name)
+                                    
+                                    if os.path.exists(full_path):
+                                        with open(full_path, 'rb') as f:
+                                            f.seek(read_start)
+                                            data += f.read(read_len)
+                                    
+                                    if len(data) >= piece_len:
+                                        break
+                                
+                                current_offset += f_size
+
+                    if data:
+                        # Calculate Entropy
+                        import math
+                        if len(data) > 0:
+                            counts = {}
+                            for byte in data:
+                                counts[byte] = counts.get(byte, 0) + 1
+                            piece_entropy = -sum((count / len(data)) * math.log2(count / len(data)) for count in counts.values())
+                        
+                        # Check for MZ header
+                        if len(data) >= 2 and data[:2] == b'MZ':
+                            has_mz_header = True
+                            
+            except Exception as e:
+                print(f"[WARN] Failed to read piece data: {e}")
+
+            # Pass these real features to the detector
+            extra_features = {
+                'entropy': piece_entropy,
+                'has_mz': has_mz_header
+            }
+            
+            result = detector.predict(piece_data, file_path=None, extra_features=extra_features)
         
             scan_result = {
                 'malicious': result['ml_detection']['is_malicious'],
@@ -554,7 +627,8 @@ class TorrentDownloader:
                 'risk_score': result['combined_risk_score'],
                 'verdict': result['verdict'],
                 'scanner': 'random_forest',
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'entropy': piece_entropy  # Store for debugging
             }
         
             # Store scan result
@@ -562,7 +636,7 @@ class TorrentDownloader:
                 scan_results[self.download_id] = {}
             scan_results[self.download_id][piece_index] = scan_result
         
-            print(f"[OK] Piece {piece_index} scanned: {scan_result['verdict']} (Risk: {scan_result['risk_score']:.1f}%)")
+            print(f"[OK] Piece {piece_index} scanned: {scan_result['verdict']} (Risk: {scan_result['risk_score']:.1f}%, Entropy: {piece_entropy:.2f})")
         
             return scan_result
         

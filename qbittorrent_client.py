@@ -39,16 +39,23 @@ class QBittorrentClient:
             password=QBITTORRENT_PASSWORD,
             REQUESTS_ARGS={'timeout': 3}
         )
-        try:
-            print(f"DEBUG: Connecting to qBittorrent at {QBITTORRENT_HOST}:{QBITTORRENT_PORT}...")
-            self.client.auth_log_in()
-            print("DEBUG: qBittorrent connected")
-            # This print statement is now handled by the singleton creation block
-            # print(f"[OK] Connected to qBittorrent {self.client.app.version}")
-        except Exception as e:
-            print(f"[WARN] qBittorrent client initialization failed: {e}")
-            print(f"[WARN] Make sure qBittorrent is running on {QBITTORRENT_HOST}:{QBITTORRENT_PORT}")
-            self.client = None
+        # Retry logic
+        max_retries = 5
+        for i in range(max_retries):
+            try:
+                print(f"DEBUG: Connecting to qBittorrent at {QBITTORRENT_HOST}:{QBITTORRENT_PORT} (Attempt {i+1}/{max_retries})...")
+                self.client.auth_log_in()
+                print("DEBUG: qBittorrent connected")
+                return # Success
+            except Exception as e:
+                print(f"[WARN] Connection attempt {i+1} failed: {e}")
+                if i < max_retries - 1:
+                    time.sleep(2)
+        
+        # If we get here, all retries failed
+        print(f"[ERR] Could not connect to qBittorrent after {max_retries} attempts.")
+        print(f"[WARN] Make sure qBittorrent is running on {QBITTORRENT_HOST}:{QBITTORRENT_PORT}")
+        self.client = None
     
     def add_torrent(self, torrent_file: str, save_path: str) -> str:
         """Add torrent and return hash"""
@@ -82,6 +89,7 @@ class QBittorrentClient:
             'num_seeds': torrent.num_seeds if hasattr(torrent, 'num_seeds') else 0,
             'download_rate': torrent.dlspeed,
             'state': torrent.state,
+            'save_path': torrent.save_path,
             'error': torrent.error if hasattr(torrent, 'error') else '',
             'error_prog': torrent.error_prog if hasattr(torrent, 'error_prog') else ''
         }
@@ -133,7 +141,10 @@ class QBittorrentClient:
     def get_torrent_files(self, torrent_hash: str) -> list:
         """Get list of files in torrent"""
         try:
-            return self.client.torrents_files(torrent_hash=torrent_hash)
+            # print(f"[DEBUG] Requesting files for hash: {torrent_hash}")
+            files = self.client.torrents_files(torrent_hash=torrent_hash)
+            # print(f"[DEBUG] Got {len(files)} files")
+            return files
         except Exception as e:
             print(f"[WARN] Failed to get torrent files: {e}")
             return []

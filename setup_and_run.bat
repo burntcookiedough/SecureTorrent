@@ -46,7 +46,7 @@ if defined QB_PATH (
     
     :: Wait a bit for it to start
     echo [WAIT] Waiting for qBittorrent to initialize...
-    timeout /t 5 /nobreak >nul
+    timeout /t 10 /nobreak >nul
 ) else (
     echo [WARN] qBittorrent not found in standard locations.
     echo        The application will run in MOCK MODE unless qBittorrent is running manually.
