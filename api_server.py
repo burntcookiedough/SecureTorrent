@@ -1,30 +1,34 @@
+print("DEBUG: Starting imports...")
 from flask import Flask, request, jsonify, send_from_directory
+print("DEBUG: Imported Flask")
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import os
 import threading
 import time
-import time
+from datetime import datetime
+import hashlib
+print("DEBUG: Importing MalwareDetector...")
+from malware_detector import MalwareDetector
+print("DEBUG: Imported MalwareDetector")
+
 # Try qBittorrent first, then fall back to mock
 USE_QBITTORRENT = False
 try:
     import qbittorrent_client
     if qbittorrent_client.QBITTORRENT_AVAILABLE:
         USE_QBITTORRENT = True
-        print("✅ Using qBittorrent for REAL torrenting")
+        print("[OK] Using qBittorrent for REAL torrenting")
     else:
         raise ImportError("qBittorrent not available")
 except Exception as e:
     import mock_libtorrent as lt
-    print(f"⚠️ qBittorrent not available ({e}). Using MOCK implementation.")
+    print(f"[WARN] qBittorrent not available ({e}). Using MOCK implementation.")
 
-from datetime import datetime
-import hashlib
-from malware_detector import MalwareDetector
+print("DEBUG: Initializing Flask app...")
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 socketio = SocketIO(app, cors_allowed_origins="*")
-
 
 # Configuration
 DOWNLOAD_FOLDER = os.path.join(os.getcwd(), "downloads")
@@ -41,10 +45,12 @@ scan_results = {}
 quarantined_files = {}
 # Initialize ML detector
 try:
+    print("DEBUG: Loading MalwareDetector model...")
     detector = MalwareDetector()  # Uses pre-trained model
-    print("✅ Malware detector loaded successfully")
+    print("DEBUG: MalwareDetector loaded")
+    print("[OK] Malware detector loaded successfully")
 except Exception as e:
-    print(f"⚠️ Malware detector failed to load: {e}")
+    print(f"[WARN] Malware detector failed to load: {e}")
     detector = None
 # ============= QUARANTINE HELPER FUNCTIONS =============
 def quarantine_file(file_path, scan_result, download_id):
@@ -74,7 +80,7 @@ def quarantine_file(file_path, scan_result, download_id):
             'status': 'quarantined'
         }
         
-        print(f"🔒 Quarantined: {file_name} (Risk: {scan_result.get('risk_score', 0):.1f}%)")
+        print(f"[SEC] Quarantined: {file_name} (Risk: {scan_result.get('risk_score', 0):.1f}%)")
         
         return {
             'success': True,
@@ -125,30 +131,51 @@ def restore_from_quarantine(quarantine_id, restore_path=None):
 class TorrentDownloader:
     def __init__(self, download_id):
         self.download_id = download_id
-        self.session = lt.session()
-        
-        settings = self.session.get_settings()
-        settings['listen_interfaces'] = '0.0.0.0:6881'
-        settings['enable_dht'] = True
-        settings['enable_lsd'] = True
-        settings['enable_upnp'] = True
-        settings['enable_natpmp'] = True
-        settings['announce_to_all_trackers'] = True
-        settings['announce_to_all_tiers'] = True
-        self.session.apply_settings(settings)
-
-        self.session.add_dht_router("router.bittorrent.com", 6881)
-        self.session.add_dht_router("router.utorrent.com", 6881)
-        self.session.add_dht_router("dht.transmissionbt.com", 6881)
-        self.session.start_dht()
-        
-        self.handle = None
-        self.info = None
+        self.use_qbittorrent = USE_QBITTORRENT
         self.stopped = False
+        
+        if self.use_qbittorrent:
+            # qBittorrent mode
+            self.qb_client = qbittorrent_client.qb_client
+            self.torrent_hash = None
+            self.torrent_info = None
+            print(f"[INFO] TorrentDownloader initialized in qBittorrent mode")
+        else:
+            # Mock libtorrent mode (fallback)
+            import mock_libtorrent as lt
+            self.session = lt.session()
+            
+            settings = self.session.get_settings()
+            settings['listen_interfaces'] = '0.0.0.0:6881'
+            settings['enable_dht'] = True
+            settings['enable_lsd'] = True
+            settings['enable_upnp'] = True
+            settings['enable_natpmp'] = True
+            settings['announce_to_all_trackers'] = True
+            settings['announce_to_all_tiers'] = True
+            self.session.apply_settings(settings)
+            
+            self.session.add_dht_router("router.bittorrent.com", 6881)
+            self.session.add_dht_router("router.utorrent.com", 6881)
+            self.session.add_dht_router("dht.transmissionbt.com", 6881)
+            self.session.start_dht()
+            
+            self.handle = None
+            self.info = None
+            print(f"[INFO] TorrentDownloader initialized in mock mode")
+
 
     def download_chunks_with_scan(self, torrent_file_path, save_path, num_pieces=10):
-        """Download chunks and emit progress via WebSocket"""
+        """Download torrent with chunk-level scanning - dispatches to qBittorrent or mock"""
+        if self.use_qbittorrent:
+            return self._download_with_qbittorrent(torrent_file_path, save_path, num_pieces)
+        else:
+            return self._download_with_mock(torrent_file_path, save_path, num_pieces)
     
+    def _download_with_mock(self, torrent_file_path, save_path, num_pieces=10):
+        """Download using mock libtorrent (fallback mode)"""
+        import mock_libtorrent as lt
+        
         try:
             self.info = lt.torrent_info(torrent_file_path)
         
@@ -290,12 +317,197 @@ class TorrentDownloader:
                 'error': str(e)
             })
             return {'success': False, 'error': str(e)}
+    
+    def _download_with_qbittorrent(self, torrent_file_path, save_path, num_pieces=10):
+        """Download using qBittorrent with TRUE piece-level scanning"""
+        try:
+            # Step 1: Parse torrent metadata
+            import mock_libtorrent as lt_parser
+            self.torrent_info = lt_parser.torrent_info(torrent_file_path)
+            
+            total_pieces = self.torrent_info.num_pieces()
+            num_pieces = min(num_pieces, total_pieces)
+            
+            # Step 2: Add torrent to qBittorrent
+            abs_save_path = os.path.abspath(save_path)
+            print(f"[INFO] Adding torrent to qBittorrent. Save path: {abs_save_path}")
+            if not os.path.exists(abs_save_path):
+                print(f"[WARN] Save path does not exist, creating: {abs_save_path}")
+                os.makedirs(abs_save_path, exist_ok=True)
+
+            self.torrent_hash = self.qb_client.add_torrent(torrent_file_path, abs_save_path)
+            print(f"[OK] Torrent added to qBittorrent: {self.torrent_hash}")
+            
+            # Step 3: Emit download_started
+            socketio.emit('download_started', {
+                'download_id': self.download_id,
+                'name': self.torrent_info.name(),
+                'total_size': self.torrent_info.total_size(),
+                'total_pieces': total_pieces,
+                'downloading_pieces': num_pieces,
+                'piece_size': self.torrent_info.piece_length()
+            })
+            
+            # Step 4: Monitor download loop
+            pieces_downloaded = set()
+            pieces_scanned = set()
+            last_progress = 0
+            stall_counter = 0
+            MAX_STALL_ITERATIONS = 600  # 5 minutes
+            
+            while len(pieces_downloaded) < num_pieces and not self.stopped:
+                # Get current piece states
+                piece_states = self.qb_client.get_piece_states(self.torrent_hash)
+                
+                if not piece_states:
+                    print("[WARN] No piece states yet, waiting for metadata...")
+                    time.sleep(1)
+                    continue
+                
+                # Get torrent info for progress/peers
+                info = self.qb_client.get_torrent_info(self.torrent_hash)
+                
+                # Check for errors
+                if info['state'] == qbittorrent_client.STATE_ERROR:
+                    print(f"[ERR] Torrent in ERROR state. Full info: {info}")
+                    error_msg = info.get('error', 'Unknown')
+                    error_prog = info.get('error_prog', '')
+                    raise Exception(f"Torrent error: {error_msg} (Prog: {error_prog})")
+                
+                # Check for newly downloaded pieces
+                for i in range(min(num_pieces, len(piece_states))):
+                    piece_state = piece_states[i]
+                    
+                    # Piece is fully downloaded
+                    if piece_state == qbittorrent_client.PIECE_DOWNLOADED:
+                        if i not in pieces_downloaded:
+                            pieces_downloaded.add(i)
+                            
+                            # Scan this piece
+                            if i not in pieces_scanned:
+                                pieces_scanned.add(i)
+                                piece_hash = f"piece_{i}_{self.torrent_hash[:8]}"
+                                scan_result = self.scan_piece(i, piece_hash)
+                                
+                                socketio.emit('piece_downloaded', {
+                                    'download_id': self.download_id,
+                                    'piece_index': i,
+                                    'piece_hash': piece_hash,
+                                    'scan_result': scan_result,
+                                    'progress': (len(pieces_downloaded) / num_pieces) * 100
+                                })
+                                
+                                print(f"[PIECE] Piece {i}/{num_pieces} downloaded and scanned")
+                
+                # Emit progress update
+                progress_percent = (len(pieces_downloaded) / num_pieces) * 100
+                socketio.emit('download_progress', {
+                    'download_id': self.download_id,
+                    'progress': progress_percent,
+                    'state': info['state'],
+                    'peers': info.get('num_peers', 0),
+                    'download_rate': info.get('download_rate', 0),
+                    'pieces_completed': len(pieces_downloaded),
+                    'total_pieces': num_pieces
+                })
+                
+                # Stall detection
+                if progress_percent == last_progress:
+                    stall_counter += 1
+                    if stall_counter > MAX_STALL_ITERATIONS:
+                        raise Exception("Download stalled for 5 minutes, aborting")
+                else:
+                    stall_counter = 0
+                    last_progress = progress_percent
+                
+                time.sleep(0.5)
+            
+            # Step 5: Download complete - quarantine check
+            if not self.stopped:
+                file_path = self.qb_client.get_download_path(self.torrent_hash)
+                
+                # Collect scan results
+                all_scans = []
+                max_risk = 0
+                malicious_count = 0
+                
+                for piece_idx in pieces_downloaded:
+                    if self.download_id in scan_results and piece_idx in scan_results[self.download_id]:
+                        scan = scan_results[self.download_id][piece_idx]
+                        all_scans.append(scan)
+                        max_risk = max(max_risk, scan.get('risk_score', 0))
+                        if scan.get('malicious', False):
+                            malicious_count += 1
+                
+                # Determine verdict
+                verdict = 'CLEAN'
+                if max_risk > 70:
+                    verdict = 'MALICIOUS'
+                elif max_risk > 40:
+                    verdict = 'SUSPICIOUS'
+                
+                # Quarantine if malicious
+                quarantine_result = None
+                if verdict == 'MALICIOUS':
+                    self.qb_client.pause_torrent(self.torrent_hash)
+                    quarantine_result = quarantine_file(
+                        file_path,
+                        {
+                            'max_risk_score': max_risk,
+                            'malicious_pieces': malicious_count,
+                            'total_pieces': len(pieces_downloaded),
+                            'verdict': verdict,
+                            'scans': all_scans
+                        },
+                        self.download_id
+                    )
+                
+                # Remove from qBittorrent
+                delete_files = (verdict == 'MALICIOUS')
+                self.qb_client.remove_torrent(self.torrent_hash, delete_files=delete_files)
+                
+                # Emit completion
+                socketio.emit('download_complete', {
+                    'download_id': self.download_id,
+                    'pieces_downloaded': len(pieces_downloaded),
+                    'file_path': file_path,
+                    'verdict': verdict,
+                    'max_risk_score': max_risk,
+                    'malicious_pieces': malicious_count,
+                    'quarantined': quarantine_result is not None and quarantine_result.get('success'),
+                    'quarantine_info': quarantine_result
+                })
+                
+                return {
+                    'success': True,
+                    'pieces_downloaded': len(pieces_downloaded),
+                    'file_name': self.torrent_info.name()
+                }
+        
+        except Exception as e:
+            print(f"[ERR] qBittorrent download error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Cleanup
+            if self.torrent_hash:
+                try:
+                    self.qb_client.remove_torrent(self.torrent_hash, delete_files=True)
+                except:
+                    pass
+            
+            socketio.emit('download_error', {
+                'download_id': self.download_id,
+                'error': str(e)
+            })
+            
+            return {'success': False, 'error': str(e)}
 
 
     def scan_piece(self, piece_index, piece_hash):
-        """🔬 Multi-layer Malware Detection"""
+        """[ML] Multi-layer Malware Detection"""
     
-        print(f"🔍 Scanning piece {piece_index} for download {self.download_id}")
+        print(f"[SCAN] Scanning piece {piece_index} for download {self.download_id}")
     
         if detector is None:
             return {
@@ -311,13 +523,25 @@ class TorrentDownloader:
         try:
            
            
-                # Normal scanning
-            piece_data = {
-                'src_bytes': self.info.piece_length(),
-                'dst_bytes': 0,
-                'peer_count': self.handle.status().num_peers if self.handle else 0,
-                'seed_count': self.handle.status().num_seeds if self.handle else 0,
-                'num_files': self.info.num_files()
+                # Get piece data based on mode
+            if self.use_qbittorrent:
+                # qBittorrent mode
+                info = self.qb_client.get_torrent_info(self.torrent_hash)
+                piece_data = {
+                    'src_bytes': self.torrent_info.piece_length(),
+                    'dst_bytes': 0,
+                    'peer_count': info.get('num_peers', 0),
+                    'seed_count': info.get('num_seeds', 0),
+                    'num_files': 1  # Simplified
+                }
+            else:
+                # Mock mode
+                piece_data = {
+                    'src_bytes': self.info.piece_length(),
+                    'dst_bytes': 0,
+                    'peer_count': self.handle.status().num_peers if self.handle else 0,
+                    'seed_count': self.handle.status().num_seeds if self.handle else 0,
+                    'num_files': self.info.num_files()
                 }
             
         
@@ -338,12 +562,12 @@ class TorrentDownloader:
                 scan_results[self.download_id] = {}
             scan_results[self.download_id][piece_index] = scan_result
         
-            print(f"✅ Piece {piece_index} scanned: {scan_result['verdict']} (Risk: {scan_result['risk_score']:.1f}%)")
+            print(f"[OK] Piece {piece_index} scanned: {scan_result['verdict']} (Risk: {scan_result['risk_score']:.1f}%)")
         
             return scan_result
         
         except Exception as e:
-            print(f"❌ Scan error for piece {piece_index}: {e}")
+            print(f"[ERR] Scan error for piece {piece_index}: {e}")
             import traceback
             traceback.print_exc()
             return {
@@ -359,8 +583,18 @@ class TorrentDownloader:
     def stop(self):
         """Stop the download"""
         self.stopped = True
-        if self.handle:
-            self.session.remove_torrent(self.handle)
+        
+        if self.use_qbittorrent:
+            if self.torrent_hash:
+                try:
+                    self.qb_client.remove_torrent(self.torrent_hash, delete_files=True)
+                    print(f"[STOP] qBittorrent torrent removed: {self.torrent_hash}")
+                except Exception as e:
+                    print(f"[WARN] Failed to remove torrent: {e}")
+        else:
+            if self.handle:
+                self.session.remove_torrent(self.handle)
+                print(f"[STOP] Mock torrent removed")
 
 
 # ============= REST API ENDPOINTS =============
@@ -494,15 +728,15 @@ def start_download():
     
     def download_thread():
         try:
-            print(f"🚀 Download thread started: {download_id}")
+            print(f"[START] Download thread started: {download_id}")
             result = downloader.download_chunks_with_scan(
                 torrent_file,
                 DOWNLOAD_FOLDER,
                 num_pieces
             )
-            print(f"✅ Download completed: {result}")
+            print(f"[OK] Download completed: {result}")
         except Exception as e:
-            print(f"❌ Download thread error: {e}")
+            print(f"[ERR] Download thread error: {e}")
             import traceback
             traceback.print_exc()
         finally:
@@ -512,11 +746,11 @@ def start_download():
             
             # Print scan results status
             if download_id in scan_results:
-                print(f"✅ Scan results preserved: {len(scan_results[download_id])} pieces")
+                print(f"[OK] Scan results preserved: {len(scan_results[download_id])} pieces")
             else:
-                print(f"⚠️ No scan results found for {download_id}")
+                print(f"[WARN] No scan results found for {download_id}")
             
-            print(f"🧹 Download thread cleaned up: {download_id}")
+            print(f"[CLEAN] Download thread cleaned up: {download_id}")
     
     # Use socketio background task for compatibility with eventlet/gevent
     socketio.start_background_task(download_thread)
@@ -638,18 +872,18 @@ def serve_static(path):
 
 if __name__ == '__main__':
     print("="*60)
-    print("🚀 Torrent Malware Detection API Server")
+    print("[INFO] Torrent Malware Detection API Server")
     print("="*60)
-    print(f"📁 Downloads: {DOWNLOAD_FOLDER}")
-    print(f"📁 Uploads: {UPLOAD_FOLDER}")
-    print(f"🔒 Quarantine: {QUARANTINE_FOLDER}")
-    print("📡 WebSocket: Enabled for real-time updates")
+    print(f"[DIR] Downloads: {DOWNLOAD_FOLDER}")
+    print(f"[DIR] Uploads: {UPLOAD_FOLDER}")
+    print(f"[SEC] Quarantine: {QUARANTINE_FOLDER}")
+    print("[WS] WebSocket: Enabled for real-time updates")
     
     # Show actual ML status
     if detector:
-        print(f"🔬 ML Integration: ✅ ACTIVE (Random Forest)")
+        print(f"[ML] ML Integration: [OK] ACTIVE (Random Forest)")
     else:
-        print("🔬 ML Integration: ❌ FAILED TO LOAD")
+        print("[ML] ML Integration: [ERR] FAILED TO LOAD")
     
     print("="*60)
     print("\nAPI Endpoints:")

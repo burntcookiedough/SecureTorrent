@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TORRENTGUARD // DEEP_DIVE</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <header>
+        <div class="brand">TORRENT<span>GUARD</span> <span style="font-size: 10px; opacity: 0.5; margin-left: 10px;">//
+                SYSTEM_V.4.0</span></div>
+        <div class="sys-status">
+            <div><span class="status-light" id="netStat"></span>NET_UPLINK</div>
+            <div id="engineStatus"><span class="status-light on" id="engineLight"></span><span
+                    id="engineText">ENGINE_IDLE</span></div>
+            <div>MEM: <span id="memVal">0</span>%</div>
+            <div>UPTIME: <span id="uptime">00:00:00</span></div>
+            <div>FPS: <span id="fpsCounter">--</span></div>
+        </div>
+    </header>
+
+    <div class="main-stage">
+
+        <div class="panel" style="grid-row: 1;">
+            <div class="panel-header">01 // INTAKE_PROTOCOL</div>
+            <div class="panel-content" style="padding: 0;">
+                <div id="dropZone" class="airlock" onclick="document.getElementById('fileInput').click()">
+                    <div class="airlock-icon">⏏</div>
+                    <div>INITIATE UPLOAD</div>
+                    <div style="font-size: 10px; color: var(--c-text-dim); margin-top: 5px;">[DRAG OBJECT HERE]
+                    </div>
+                    <input type="file" id="fileInput" accept=".torrent" style="display: none;">
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="grid-row: 2;">
+            <div class="panel-header">02 // OBJECT_METADATA</div>
+            <div class="panel-content">
+                <div style="margin-bottom: 15px;">
+                    <div style="font-size: 10px; color: var(--c-text-dim);">FILE_NAME</div>
+                    <div id="metaName"
+                        style="color: var(--c-text-lite); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        --</div>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <div style="font-size: 10px; color: var(--c-text-dim);">SIZE_ON_DISK</div>
+                    <div id="metaSize">--</div>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <div style="font-size: 10px; color: var(--c-accent-main);">HASH_ID</div>
+                    <div id="metaHash" style="font-size: 10px; color: var(--c-accent-main);">--</div>
+                </div>
+
+                <button id="btnScan" class="btn-cyber" disabled onclick="startScan()">EXECUTE SCAN</button>
+            </div>
+        </div>
+
+        <div class="panel visualizer-container">
+            <div id="gridPlane" class="grid-plane">
+            </div>
+            <div
+                style="position: absolute; bottom: 20px; left: 20px; font-size: 12px; font-weight: bold; color: var(--c-accent-main);">
+                SECTOR_VISUALIZATION <span class="blink">_</span>
+            </div>
+        </div>
+
+        <div class="panel" style="grid-row: 1;">
+            <div class="panel-header">03 // SIGNAL_ANALYSIS</div>
+            <div class="panel-content">
+                <div style="height: 60px; border-bottom: 1px solid #222; margin-bottom: 10px; position: relative;">
+                    <canvas id="noiseCanvas"></canvas>
+                    <div style="position: absolute; top:0; left:0; font-size: 9px; color: var(--c-text-dim);">
+                        ENTROPY_WAVEFORM</div>
+                </div>
+
+                <div style="font-size: 10px; margin-bottom: 5px; display: flex; justify-content: space-between;">
+                    <span>THREAT_PROBABILITY</span>
+                    <span id="riskNum">0.0%</span>
+                </div>
+                <div class="risk-gauge">
+                    <div id="riskFill" class="risk-fill"></div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <div style="font-size: 10px; margin-bottom: 5px;">BUFFER_DUMP</div>
+                    <div id="hexDump" class="hex-view">
+                        00 00 00 00 00 00 00 00<br>
+                        00 00 00 00 00 00 00 00<br>
+                        00 00 00 00 00 00 00 00<br>
+                        00 00 00 00 00 00 00 00
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="grid-row: 2;">
+            <div class="panel-header">04 // SYSTEM_LOG</div>
+            <div class="panel-content" id="logConsole">
+                <div class="log-feed" id="logFeed">
+                    <div class="log-item info"><span class="ts">00:00:00</span><span>SYS_INIT... OK</span></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div
+        style="display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-size: 10px; color: #444; border-top: var(--border-hard);">
+        <div>UI_RENDER: GPU_ACCELERATED</div>
+        <div>LATENCY: <span id="ping">12</span>ms</div>
+    </div>
+
+    <div id="resultOverlay" class="overlay-report">
+        <div class="report-card">
+            <h1 id="reportTitle" style="margin: 0; font-size: 32px; color: var(--c-text-lite);">SCAN_COMPLETE</h1>
+            <div class="deco-line"></div>
+            <p id="reportSub" style="color: var(--c-text-mid); line-height: 1.6;">Analysis finished.</p>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 30px;">
+                <button class="btn-cyber" onclick="location.reload()">PURGE_DATA</button>
+                <button class="btn-cyber" onclick="saveLog()">SAVE_LOG</button>
+                <button class="btn-cyber"
+                    onclick="document.getElementById('resultOverlay').classList.remove('visible')">REVIEW_DATA</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

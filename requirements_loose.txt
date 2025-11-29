@@ -1,0 +1,11 @@
+Flask
+flask-cors
+flask-socketio
+eventlet
+requests
+pefile
+yara-python
+qbittorrent-api
+scikit-learn
+numpy
+pandas

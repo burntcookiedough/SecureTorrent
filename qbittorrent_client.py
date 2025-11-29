@@ -13,6 +13,21 @@ QBITTORRENT_PORT = 8080
 QBITTORRENT_USERNAME = 'admin'
 QBITTORRENT_PASSWORD = 'torrentguard2024'
 
+# Piece states (from qBittorrent API)
+PIECE_NOT_DOWNLOADED = 0
+PIECE_DOWNLOADING = 1
+PIECE_DOWNLOADED = 2
+
+# Torrent states
+STATE_ERROR = 'error'
+STATE_PAUSED = 'pausedDL'
+STATE_QUEUED = 'queuedDL'
+STATE_DOWNLOADING = 'downloading'
+STATE_STALLED = 'stalledDL'
+STATE_CHECKING = 'checkingDL'
+STATE_COMPLETE = 'uploading'  # seeding
+
+
 class QBittorrentClient:
     """Adapter to make qBittorrent API look like libtorrent"""
     
@@ -21,13 +36,19 @@ class QBittorrentClient:
             host=QBITTORRENT_HOST,
             port=QBITTORRENT_PORT,
             username=QBITTORRENT_USERNAME,
-            password=QBITTORRENT_PASSWORD
+            password=QBITTORRENT_PASSWORD,
+            REQUESTS_ARGS={'timeout': 3}
         )
         try:
+            print(f"DEBUG: Connecting to qBittorrent at {QBITTORRENT_HOST}:{QBITTORRENT_PORT}...")
             self.client.auth_log_in()
-            print(f"✅ Connected to qBittorrent {self.client.app.version}")
+            print("DEBUG: qBittorrent connected")
+            # This print statement is now handled by the singleton creation block
+            # print(f"[OK] Connected to qBittorrent {self.client.app.version}")
         except Exception as e:
-            raise ConnectionError(f"Failed to connect to qBittorrent: {e}")
+            print(f"[WARN] qBittorrent client initialization failed: {e}")
+            print(f"[WARN] Make sure qBittorrent is running on {QBITTORRENT_HOST}:{QBITTORRENT_PORT}")
+            self.client = None
     
     def add_torrent(self, torrent_file: str, save_path: str) -> str:
         """Add torrent and return hash"""
@@ -60,7 +81,9 @@ class QBittorrentClient:
             'num_peers': torrent.num_peers if hasattr(torrent, 'num_peers') else 0,
             'num_seeds': torrent.num_seeds if hasattr(torrent, 'num_seeds') else 0,
             'download_rate': torrent.dlspeed,
-            'state': torrent.state
+            'state': torrent.state,
+            'error': torrent.error if hasattr(torrent, 'error') else '',
+            'error_prog': torrent.error_prog if hasattr(torrent, 'error_prog') else ''
         }
     
     def set_piece_priorities(self, torrent_hash: str, num_pieces: int):
@@ -83,12 +106,73 @@ class QBittorrentClient:
     def resume_torrent(self, torrent_hash: str):
         """Resume torrent"""
         self.client.torrents_resume(torrent_hashes=torrent_hash)
+    
+    def get_piece_states(self, torrent_hash: str) -> list:
+        """
+        Get state of all pieces for a torrent
+        Returns: List of integers (0=not downloaded, 1=downloading, 2=downloaded)
+        """
+        try:
+            states = self.client.torrents_piece_states(torrent_hash=torrent_hash)
+            return states if states else []
+        except Exception as e:
+            print(f"[WARN] Failed to get piece states: {e}")
+            return []
+    
+    def get_piece_hashes(self, torrent_hash: str, num_pieces: int) -> list:
+        """
+        Get identifiers for pieces (qBittorrent doesn't expose SHA1 hashes)
+        Returns: List of piece identifiers
+        """
+        try:
+            return [f"piece_{i}_{torrent_hash[:8]}" for i in range(num_pieces)]
+        except Exception as e:
+            print(f"[WARN] Failed to generate piece hashes: {e}")
+            return []
+    
+    def get_torrent_files(self, torrent_hash: str) -> list:
+        """Get list of files in torrent"""
+        try:
+            return self.client.torrents_files(torrent_hash=torrent_hash)
+        except Exception as e:
+            print(f"[WARN] Failed to get torrent files: {e}")
+            return []
+    
+    def get_download_path(self, torrent_hash: str) -> str:
+        """
+        Get full path to downloaded file(s)
+        For single-file torrents: returns file path
+        For multi-file torrents: returns directory path
+        """
+        try:
+            info = self.get_torrent_info(torrent_hash)
+            files = self.get_torrent_files(torrent_hash)
+            
+            if not files:
+                return None
+            
+            save_path = info.get('save_path', '')
+            
+            # For single-file torrents
+            if len(files) == 1:
+                return os.path.join(save_path, files[0].name)
+            
+            # For multi-file torrents, return directory
+            return save_path
+        except Exception as e:
+            print(f"[WARN] Failed to get download path: {e}")
+            return None
 
 # Create singleton instance
 try:
     qb_client = QBittorrentClient()
-    QBITTORRENT_AVAILABLE = True
+    if qb_client.client:
+        print(f"[OK] Connected to qBittorrent {qb_client.client.app.version}")
+        QBITTORRENT_AVAILABLE = True
+    else:
+        print("[WARN] qBittorrent not available, will use mock")
+        QBITTORRENT_AVAILABLE = False
 except Exception as e:
-    print(f"⚠️ qBittorrent client initialization failed: {e}")
+    print(f"[ERR] Failed to connect to qBittorrent: {e}")
     qb_client = None
     QBITTORRENT_AVAILABLE = False
