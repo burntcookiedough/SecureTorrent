@@ -41,3 +41,23 @@ quarantine/
 *.bak
 *.orig
 *~
+
+# --- Models ---
+*.pkl
+*.h5
+*.pt
+*.pth
+*.onnx
+*.joblib
+
+# --- Testing ---
+.coverage
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# --- Misc ---
+*.torrent*
+*.iso
+*.bin
+*.exe
