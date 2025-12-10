@@ -524,24 +524,27 @@ class TorrentDownloader:
            
            
                 # Get piece data based on mode
+            # IMPORTANT: Features must match train_hybrid_model.py expectations
             if self.use_qbittorrent:
                 # qBittorrent mode
                 info = self.qb_client.get_torrent_info(self.torrent_hash)
+                total_size = self.torrent_info.total_size()
                 piece_data = {
-                    'src_bytes': self.torrent_info.piece_length(),
-                    'dst_bytes': 0,
-                    'peer_count': info.get('num_peers', 0),
-                    'seed_count': info.get('num_seeds', 0),
-                    'num_files': 1  # Simplified
+                    'file_size': total_size,
+                    'section_count': 5,  # Reasonable default for benign files
+                    'entry_point': 1000,  # Default
+                    'download_progress': 1.0,
+                    'torrent_piece_count': self.torrent_info.num_pieces()
                 }
             else:
                 # Mock mode
+                total_size = self.info.total_size()
                 piece_data = {
-                    'src_bytes': self.info.piece_length(),
-                    'dst_bytes': 0,
-                    'peer_count': self.handle.status().num_peers if self.handle else 0,
-                    'seed_count': self.handle.status().num_seeds if self.handle else 0,
-                    'num_files': self.info.num_files()
+                    'file_size': total_size,
+                    'section_count': 5,  # Reasonable default for benign files
+                    'entry_point': 1000,  # Default
+                    'download_progress': 1.0,
+                    'torrent_piece_count': self.info.num_pieces()
                 }
             
         
