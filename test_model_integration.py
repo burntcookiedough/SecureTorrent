@@ -15,11 +15,11 @@ try:
     # }
     
     piece_data = {
-        'src_bytes': 524288, # 512KB
-        'dst_bytes': 0,
-        'peer_count': 25,
-        'seed_count': 5,
-        'num_files': 1
+        'file_size': 524288,
+        'section_count': 5,
+        'entry_point': 4096,
+        'download_progress': 0.5,
+        'torrent_piece_count': 100
     }
     
     print(f"📊 Testing prediction with data: {piece_data}")
